@@ -2,13 +2,36 @@ import { Router } from "express";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import QuestionPool from "../models/QuestionPool.js";
 import { generateCategoryPool } from "../services/questionGenerator.js";
+import { runDailyGeneration } from "../scripts/generateDailyPool.js";
 
 const router = Router();
-router.use(requireAuth, requireAdmin);
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
+
+// POST /api/admin/trigger-generation?key=... - manually kick off today's pool
+// generation over HTTP. Exists because free-tier hosting (Render) has no
+// shell/one-off-job access to run the script directly. Protected by a
+// shared secret (TRIGGER_SECRET env var), not by user login, since no admin
+// account may exist yet on first setup. Safe to remove once cron is proven
+// reliable and/or the plan is upgraded to support one-off jobs.
+router.post("/trigger-generation", async (req, res) => {
+  const key = req.query.key || req.headers["x-trigger-key"];
+  if (!process.env.TRIGGER_SECRET || key !== process.env.TRIGGER_SECRET) {
+    return res.status(403).json({ error: "Invalid or missing trigger key" });
+  }
+
+  // Respond immediately; generation takes several minutes (19 categories,
+  // spaced out to respect Gemini rate limits) so we don't hold the request.
+  res.json({ started: true, message: "Daily generation started in background." });
+
+  runDailyGeneration().catch((err) =>
+    console.error("[admin] Manual trigger-generation failed:", err)
+  );
+});
+
+router.use(requireAuth, requireAdmin);
 
 // GET /api/admin/pools - view today's pool status per category
 router.get("/pools", async (req, res) => {
