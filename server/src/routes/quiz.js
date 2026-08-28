@@ -47,14 +47,29 @@ router.post("/start", requireAuth, async (req, res) => {
   const userId = req.user.id;
   const date = todayKey();
 
-  let session = await QuizSession.findOne({ user: userId, date });
-
-  if (session && session.status !== "in_progress") {
-    return res.status(409).json({ error: "You've already completed today's quiz." });
+  // Atomic upsert avoids a race condition where two concurrent "start"
+  // requests (e.g. a double-click, or a client retry) both see no existing
+  // session and both try to create one, tripping the unique (user, date)
+  // index and crashing the request.
+  let session;
+  try {
+    session = await QuizSession.findOneAndUpdate(
+      { user: userId, date },
+      { $setOnInsert: { user: userId, date, status: "in_progress" } },
+      { upsert: true, new: true }
+    );
+  } catch (err) {
+    // Extremely rare remaining race (simultaneous first-time inserts) —
+    // one write wins, the other hits a duplicate-key error. Just re-fetch.
+    if (err.code === 11000) {
+      session = await QuizSession.findOne({ user: userId, date });
+    } else {
+      throw err;
+    }
   }
 
-  if (!session) {
-    session = await QuizSession.create({ user: userId, date, status: "in_progress" });
+  if (session.status !== "in_progress") {
+    return res.status(409).json({ error: "You've already completed today's quiz." });
   }
 
   const plan = await buildUserQuizPlan(userId, date);

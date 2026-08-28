@@ -10,6 +10,16 @@ import dashboardRoutes from "./routes/dashboard.js";
 import adminRoutes from "./routes/admin.js";
 import { runDailyGeneration } from "./scripts/generateDailyPool.js";
 
+// Last-resort safety net: an error thrown inside an async route handler
+// that isn't caught locally becomes an unhandled rejection, which by
+// default crashes the whole Node process (as we saw with a MongoDB
+// duplicate-key error taking down every user's session). Logging instead
+// of exiting keeps the server up for everyone else while we fix the
+// underlying bug.
+process.on("unhandledRejection", (err) => {
+  console.error("[server] Unhandled promise rejection:", err);
+});
+
 const app = express();
 
 app.use(
@@ -35,6 +45,16 @@ app.use("/api/auth", authRoutes);
 app.use("/api/quiz", quizRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin", adminRoutes);
+
+// Catches errors thrown/rejected inside any route handler above (e.g. an
+// unexpected DB error) so a single bad request returns a 500 to the client
+// instead of crashing the entire process and taking down every user's
+// session. Must be registered after all routes.
+app.use((err, req, res, next) => {
+  console.error("[server] Unhandled route error:", err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: "Internal server error" });
+});
 
 const PORT = process.env.PORT || 5000;
 
