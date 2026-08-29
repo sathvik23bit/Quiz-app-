@@ -163,6 +163,10 @@ export default function Quiz() {
   return (
     <div className="centered-page">
       <div className="card quiz-card">
+        <p className="integrity-notice">
+          ⚠️ Do not use AI tools, search engines, or any other website for
+          help during this quiz. Switching tabs or windows is monitored.
+        </p>
         {warning && <p className="warning">{warning}</p>}
         <div className="quiz-meta">
           <span>Round {session.categoryIndex + 1} / {session.totalCategories}</span>

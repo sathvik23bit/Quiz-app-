@@ -76,6 +76,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .error { color: #dc2626; }
 .warning { color: #b45309; font-weight: bold; }
+.integrity-notice {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
 .correct { color: #16a34a; font-weight: bold; }
 .incorrect { color: #dc2626; font-weight: bold; }
 .hint { color: #4f46e5; font-style: italic; }
