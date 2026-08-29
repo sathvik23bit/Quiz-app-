@@ -12,7 +12,7 @@ const router = Router();
 
 const QUESTION_TIME_LIMIT_SEC = 15;
 const HINTS_PER_CATEGORY = 3;
-const MAX_VIOLATIONS = 1; // 1 warning allowed, 2nd violation ends quiz
+const MAX_VIOLATIONS = 2; // 2 warnings allowed, 3rd violation ends quiz
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);

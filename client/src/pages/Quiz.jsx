@@ -98,7 +98,11 @@ export default function Quiz() {
           setFinished(true);
           setError("Quiz ended due to repeated tab-switching.");
         } else {
-          setWarning("Warning: switching tabs again will end your quiz.");
+          setWarning(
+            `Warning ${data.violations}/3: switching tabs again ${
+              data.violations >= 2 ? "one more time" : "too often"
+            } will end your quiz.`
+          );
           setTimeout(() => setWarning(""), 4000);
         }
       } catch {
