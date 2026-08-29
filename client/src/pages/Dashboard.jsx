@@ -27,7 +27,7 @@ export default function Dashboard() {
       <header className="topbar">
         <h1>Welcome, {user?.username}</h1>
         <div>
-          <button onClick={() => navigate("/quiz")}>Play Today's Quiz</button>
+          <button onClick={() => navigate("/categories")}>Play Today's Quiz</button>
           <button className="link-btn" onClick={logout}>Log out</button>
         </div>
       </header>
@@ -64,8 +64,8 @@ export default function Dashboard() {
           <h2>Your History</h2>
           <ul>
             {history.map((s) => (
-              <li key={s.date}>
-                {s.date}: {s.status} — score {s.score}
+              <li key={`${s.date}-${s.category}`}>
+                {s.date} · {s.category}: {s.status} — score {s.score}
                 {s.violations > 0 ? ` (violations: ${s.violations})` : ""}
               </li>
             ))}

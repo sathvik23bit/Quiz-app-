@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import api from "../api.js";
 
 export default function Quiz() {
-  const [session, setSession] = useState(null); // { category, question, categoryIndex, ... }
+  const { category } = useParams();
+  const [session, setSession] = useState(null);
   const [answer, setAnswer] = useState("");
-  const [feedback, setFeedback] = useState(null); // { correct, matchLayer }
+  const [feedback, setFeedback] = useState(null); // { correct, correctAnswer, explanation }
   const [timeLeft, setTimeLeft] = useState(15);
   const [hintsRemaining, setHintsRemaining] = useState(3);
   const [hintText, setHintText] = useState("");
@@ -20,7 +21,7 @@ export default function Quiz() {
 
   useEffect(() => {
     api
-      .post("/quiz/start")
+      .post("/quiz/start", { category })
       .then(({ data }) => {
         setSession(data);
         setTimeLeft(data.timeLimitSec);
@@ -28,47 +29,51 @@ export default function Quiz() {
         startedAtRef.current = Date.now();
       })
       .catch((err) => setError(err.response?.data?.error || "Could not start quiz"));
-  }, []);
+  }, [category]);
 
   const submitAnswer = useCallback(
     async (submittedAnswer) => {
-      if (!session || finished) return;
+      if (!session || finished || feedback) return;
       clearInterval(timerRef.current);
 
       const timeTakenSec = Math.round((Date.now() - startedAtRef.current) / 1000);
       try {
         const { data } = await api.post("/quiz/answer", {
+          category,
           answer: submittedAnswer,
           timeTakenSec,
         });
-        setFeedback({ correct: data.correct, layer: data.matchLayer });
+        setFeedback({
+          correct: data.correct,
+          correctAnswer: data.correctAnswer,
+          explanation: data.explanation,
+        });
 
-        if (data.finished) {
-          setFinished(true);
-          setFinalScore(data.score);
-          return;
-        }
-
+        // Give the player time to read the answer + explanation before
+        // advancing (longer than a plain correct/incorrect flash).
         setTimeout(() => {
+          if (data.finished) {
+            setFinished(true);
+            setFinalScore(data.score);
+            return;
+          }
           setFeedback(null);
           setAnswer("");
           setHintText("");
           setHintsRemaining(3);
           setSession((prev) => ({
             ...prev,
-            category: data.category,
             question: data.question,
-            categoryIndex: data.categoryIndex,
             questionIndex: data.questionIndex,
           }));
           setTimeLeft(15);
           startedAtRef.current = Date.now();
-        }, 1200);
+        }, 3500);
       } catch (err) {
         setError(err.response?.data?.error || "Failed to submit answer");
       }
     },
-    [session, finished]
+    [session, finished, feedback, category]
   );
 
   // Countdown timer — auto-submits empty answer at 0
@@ -86,14 +91,14 @@ export default function Quiz() {
     }, 1000);
     return () => clearInterval(timerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.questionIndex, session?.categoryIndex, feedback]);
+  }, [session?.questionIndex, feedback]);
 
   // Anti-cheat: tab switch / window blur detection
   useEffect(() => {
     async function reportViolation() {
       if (finished) return;
       try {
-        const { data } = await api.post("/quiz/violation");
+        const { data } = await api.post("/quiz/violation", { category });
         if (data.terminated) {
           setFinished(true);
           setError("Quiz ended due to repeated tab-switching.");
@@ -123,12 +128,12 @@ export default function Quiz() {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("blur", handleBlur);
     };
-  }, [finished]);
+  }, [finished, category]);
 
   async function useHint() {
     if (hintsRemaining <= 0) return;
     try {
-      const { data } = await api.post("/quiz/hint");
+      const { data } = await api.post("/quiz/hint", { category });
       setHintText(data.hint);
       setHintsRemaining(data.hintsRemaining);
     } catch (err) {
@@ -140,7 +145,7 @@ export default function Quiz() {
     return (
       <div className="centered-page">
         <p className="error">{error}</p>
-        <button onClick={() => navigate("/")}>Back to Dashboard</button>
+        <button onClick={() => navigate("/categories")}>Back to Categories</button>
       </div>
     );
   }
@@ -149,16 +154,22 @@ export default function Quiz() {
     return (
       <div className="centered-page">
         <div className="card">
-          <h1>Quiz Complete</h1>
-          {finalScore !== null && <p>Your score: {finalScore} / 380</p>}
+          <h1>{category} Complete</h1>
+          {finalScore !== null && <p>Your score: {finalScore} / 20</p>}
           {error && <p className="error">{error}</p>}
-          <button onClick={() => navigate("/")}>Back to Dashboard</button>
+          <button onClick={() => navigate("/categories")}>Back to Categories</button>
         </div>
       </div>
     );
   }
 
   if (!session) return <div className="centered-page">Loading quiz...</div>;
+
+  const q = session.question;
+  const imageUrl =
+    q?.isImageQuestion && q?.imageQuery
+      ? `https://source.unsplash.com/500x300/?${encodeURIComponent(q.imageQuery)}`
+      : null;
 
   return (
     <div className="centered-page">
@@ -169,12 +180,16 @@ export default function Quiz() {
         </p>
         {warning && <p className="warning">{warning}</p>}
         <div className="quiz-meta">
-          <span>Round {session.categoryIndex + 1} / {session.totalCategories}</span>
+          <span>{category}</span>
           <span>Question {session.questionIndex + 1} / {session.questionsPerRound}</span>
           <span className={timeLeft <= 5 ? "timer danger" : "timer"}>{timeLeft}s</span>
         </div>
-        <h2>{session.category}</h2>
-        <p className="question-text">{session.question?.text}</p>
+
+        {imageUrl && (
+          <img src={imageUrl} alt="Quiz visual" className="question-image" />
+        )}
+
+        <p className="question-text">{q?.text}</p>
 
         <input
           autoFocus
@@ -194,11 +209,20 @@ export default function Quiz() {
           </button>
         </div>
 
-        {hintText && <p className="hint">💡 {hintText}</p>}
+        {hintText && !feedback && <p className="hint">💡 {hintText}</p>}
+
         {feedback && (
-          <p className={feedback.correct ? "correct" : "incorrect"}>
-            {feedback.correct ? "Correct!" : "Incorrect"}
-          </p>
+          <div className={feedback.correct ? "feedback-box correct-box" : "feedback-box incorrect-box"}>
+            <p className="feedback-verdict">
+              {feedback.correct ? "✅ Correct!" : "❌ Incorrect"}
+            </p>
+            <p className="feedback-answer">
+              Correct answer: <strong>{feedback.correctAnswer}</strong>
+            </p>
+            {feedback.explanation && (
+              <p className="feedback-explanation">{feedback.explanation}</p>
+            )}
+          </div>
         )}
       </div>
     </div>

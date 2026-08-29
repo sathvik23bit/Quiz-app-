@@ -36,3 +36,6 @@ export const DIFFICULTY_SPLIT = {
 // a different (deterministic, per-user) order — not a different subset.
 export const POOL_SIZE_PER_CATEGORY = QUESTIONS_PER_ROUND;
 export const POOL_DIFFICULTY_SPLIT = DIFFICULTY_SPLIT;
+
+// Of the 20 questions per category, this many are image-based.
+export const IMAGE_QUESTIONS_PER_CATEGORY = 2;

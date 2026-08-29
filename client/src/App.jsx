@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext.jsx";
 import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import Categories from "./pages/Categories.jsx";
 import Quiz from "./pages/Quiz.jsx";
 
 function Protected({ children }) {
@@ -22,7 +23,15 @@ export default function App() {
         }
       />
       <Route
-        path="/quiz"
+        path="/categories"
+        element={
+          <Protected>
+            <Categories />
+          </Protected>
+        }
+      />
+      <Route
+        path="/quiz/:category"
         element={
           <Protected>
             <Quiz />

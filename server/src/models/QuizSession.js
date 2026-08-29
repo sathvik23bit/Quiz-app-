@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 
 const answerSchema = new mongoose.Schema(
   {
-    category: String,
     qid: String,
     userAnswer: String,
     correct: Boolean,
@@ -12,16 +11,20 @@ const answerSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// One session = one category attempt for one user on one day. Categories
+// are played independently (player picks any category via buttons), each
+// with its own one-shot-per-day attempt — not one combined 19-category
+// session anymore.
 const quizSessionSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     date: { type: String, required: true }, // snapshot date, locks which pool this session uses
+    category: { type: String, required: true },
     status: {
       type: String,
       enum: ["in_progress", "completed", "terminated_violation"],
       default: "in_progress",
     },
-    currentCategoryIndex: { type: Number, default: 0 },
     currentQuestionIndex: { type: Number, default: 0 },
     answers: [answerSchema],
     score: { type: Number, default: 0 },
@@ -32,6 +35,6 @@ const quizSessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-quizSessionSchema.index({ user: 1, date: 1 }, { unique: true });
+quizSessionSchema.index({ user: 1, date: 1, category: 1 }, { unique: true });
 
 export default mongoose.model("QuizSession", quizSessionSchema);

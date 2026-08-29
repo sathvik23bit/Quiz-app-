@@ -18,23 +18,8 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function redisKey(userId, date) {
-  return `session:${userId}:${date}`;
-}
-
-// Build (or resume) the user's full ordered set of questions across all
-// 19 categories for a given date, without exposing answers to the client.
-async function buildUserQuizPlan(userId, date) {
-  const pools = await QuestionPool.find({ date, status: "published" }).lean();
-  const poolByCategory = Object.fromEntries(pools.map((p) => [p.category, p.questions]));
-
-  const plan = CATEGORIES.map((category) => {
-    const poolQuestions = poolByCategory[category] || [];
-    const userQuestions = selectUserQuestions(userId, date, category, poolQuestions);
-    return { category, questions: userQuestions };
-  });
-
-  return plan;
+function redisKey(userId, date, category) {
+  return `session:${userId}:${date}:${category}`;
 }
 
 function stripAnswer(q) {
@@ -42,93 +27,112 @@ function stripAnswer(q) {
   return safe;
 }
 
-// POST /api/quiz/start - creates or resumes today's session
-router.post("/start", requireAuth, async (req, res) => {
+// GET /api/quiz/categories - list all 19 categories with today's status for
+// this user, so the frontend can render one button per category.
+router.get("/categories", requireAuth, async (req, res) => {
   const userId = req.user.id;
   const date = todayKey();
 
+  const [pools, sessions] = await Promise.all([
+    QuestionPool.find({ date, status: "published" }).select("category").lean(),
+    QuizSession.find({ user: userId, date }).select("category status score").lean(),
+  ]);
+
+  const readyCategories = new Set(pools.map((p) => p.category));
+  const sessionByCategory = Object.fromEntries(sessions.map((s) => [s.category, s]));
+
+  const categories = CATEGORIES.map((category) => {
+    const session = sessionByCategory[category];
+    return {
+      category,
+      ready: readyCategories.has(category),
+      status: session?.status || "not_started",
+      score: session?.score ?? null,
+    };
+  });
+
+  res.json({ categories });
+});
+
+// POST /api/quiz/start - body: { category }. Creates or resumes today's
+// attempt for that single category.
+router.post("/start", requireAuth, async (req, res) => {
+  const userId = req.user.id;
+  const date = todayKey();
+  const { category } = req.body;
+
+  if (!CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: "Unknown category" });
+  }
+
+  const pool = await QuestionPool.findOne({ date, category, status: "published" }).lean();
+  if (!pool || !pool.questions?.length) {
+    return res.status(503).json({ error: "This category isn't ready yet. Try again shortly." });
+  }
+
   // Atomic upsert avoids a race condition where two concurrent "start"
-  // requests (e.g. a double-click, or a client retry) both see no existing
-  // session and both try to create one, tripping the unique (user, date)
-  // index and crashing the request.
+  // requests both see no existing session and both try to create one.
   let session;
   try {
     session = await QuizSession.findOneAndUpdate(
-      { user: userId, date },
-      { $setOnInsert: { user: userId, date, status: "in_progress" } },
+      { user: userId, date, category },
+      { $setOnInsert: { user: userId, date, category, status: "in_progress" } },
       { upsert: true, new: true }
     );
   } catch (err) {
-    // Extremely rare remaining race (simultaneous first-time inserts) —
-    // one write wins, the other hits a duplicate-key error. Just re-fetch.
     if (err.code === 11000) {
-      session = await QuizSession.findOne({ user: userId, date });
+      session = await QuizSession.findOne({ user: userId, date, category });
     } else {
       throw err;
     }
   }
 
   if (session.status !== "in_progress") {
-    return res.status(409).json({ error: "You've already completed today's quiz." });
+    return res.status(409).json({ error: "You've already completed this category today." });
   }
 
-  const plan = await buildUserQuizPlan(userId, date);
-  if (plan.every((round) => round.questions.length === 0)) {
-    return res.status(503).json({ error: "Today's quiz isn't ready yet. Try again shortly." });
-  }
+  const questions = selectUserQuestions(userId, date, category, pool.questions);
 
-  // Cache plan + hint counters in Redis for fast reads during the quiz
   await redis.set(
-    redisKey(userId, date),
-    JSON.stringify({
-      plan,
-      hintsUsedByCategory: {},
-      currentCategoryIndex: session.currentCategoryIndex,
-      currentQuestionIndex: session.currentQuestionIndex,
-      violations: session.violations,
-    }),
-    { ex: 60 * 60 * 6 } // 6h TTL safety net
+    redisKey(userId, date, category),
+    JSON.stringify({ questions, hintsUsed: 0, currentQuestionIndex: session.currentQuestionIndex }),
+    { ex: 60 * 60 * 6 }
   );
 
-  const currentRound = plan[session.currentCategoryIndex];
-  const currentQuestion = currentRound?.questions[session.currentQuestionIndex];
+  const currentQuestion = questions[session.currentQuestionIndex];
 
   res.json({
     sessionId: session._id,
-    categoryIndex: session.currentCategoryIndex,
+    category,
     questionIndex: session.currentQuestionIndex,
-    category: currentRound?.category,
     question: currentQuestion ? stripAnswer(currentQuestion) : null,
     timeLimitSec: QUESTION_TIME_LIMIT_SEC,
     hintsRemaining: HINTS_PER_CATEGORY,
-    totalCategories: CATEGORIES.length,
     questionsPerRound: QUESTIONS_PER_ROUND,
   });
 });
 
-// POST /api/quiz/answer - submit an answer for the current question
+// POST /api/quiz/answer - body: { category, answer, timeTakenSec }
 router.post("/answer", requireAuth, async (req, res) => {
   const userId = req.user.id;
   const date = todayKey();
-  const { answer, timeTakenSec } = req.body;
+  const { category, answer, timeTakenSec } = req.body;
 
-  const session = await QuizSession.findOne({ user: userId, date });
+  const session = await QuizSession.findOne({ user: userId, date, category });
   if (!session || session.status !== "in_progress") {
-    return res.status(409).json({ error: "No active quiz session." });
+    return res.status(409).json({ error: "No active quiz session for this category." });
   }
 
-  const cached = await redis.get(redisKey(userId, date));
+  const cached = await redis.get(redisKey(userId, date, category));
   const state = typeof cached === "string" ? JSON.parse(cached) : cached;
   if (!state) return res.status(410).json({ error: "Session expired, please restart." });
 
-  const round = state.plan[session.currentCategoryIndex];
-  const question = round?.questions[session.currentQuestionIndex];
+  const question = state.questions[session.currentQuestionIndex];
   if (!question) return res.status(400).json({ error: "No current question." });
 
   const { correct, layer } = await checkAnswer(answer, question);
 
   session.answers.push({
-    category: round.category,
     qid: question.qid,
     userAnswer: answer,
     correct,
@@ -136,18 +140,10 @@ router.post("/answer", requireAuth, async (req, res) => {
   });
   if (correct) session.score += 1;
 
-  // Advance pointer
-  let { currentCategoryIndex, currentQuestionIndex } = session;
-  currentQuestionIndex += 1;
-  if (currentQuestionIndex >= round.questions.length) {
-    currentQuestionIndex = 0;
-    currentCategoryIndex += 1;
-  }
+  const nextIndex = session.currentQuestionIndex + 1;
+  const finished = nextIndex >= state.questions.length;
 
-  const finished = currentCategoryIndex >= CATEGORIES.length;
-
-  session.currentCategoryIndex = currentCategoryIndex;
-  session.currentQuestionIndex = currentQuestionIndex;
+  session.currentQuestionIndex = nextIndex;
   if (finished) {
     session.status = "completed";
     session.completedAt = new Date();
@@ -158,15 +154,12 @@ router.post("/answer", requireAuth, async (req, res) => {
   await session.save();
 
   let nextQuestion = null;
-  let nextCategory = null;
   if (!finished) {
-    nextCategory = state.plan[currentCategoryIndex].category;
-    nextQuestion = stripAnswer(state.plan[currentCategoryIndex].questions[currentQuestionIndex]);
-    state.currentCategoryIndex = currentCategoryIndex;
-    state.currentQuestionIndex = currentQuestionIndex;
-    await redis.set(redisKey(userId, date), JSON.stringify(state), { ex: 60 * 60 * 6 });
+    nextQuestion = stripAnswer(state.questions[nextIndex]);
+    state.currentQuestionIndex = nextIndex;
+    await redis.set(redisKey(userId, date, category), JSON.stringify(state), { ex: 60 * 60 * 6 });
   } else {
-    await redis.del(redisKey(userId, date));
+    await redis.del(redisKey(userId, date, category));
   }
 
   res.json({
@@ -174,51 +167,51 @@ router.post("/answer", requireAuth, async (req, res) => {
     matchLayer: layer,
     finished,
     score: session.score,
-    category: nextCategory,
+    correctAnswer: question.answer,
+    explanation: question.explanation || "",
     question: nextQuestion,
-    categoryIndex: currentCategoryIndex,
-    questionIndex: currentQuestionIndex,
+    questionIndex: nextIndex,
   });
 });
 
-// POST /api/quiz/hint - use one of 3 hints available per category
+// POST /api/quiz/hint - body: { category }
 router.post("/hint", requireAuth, async (req, res) => {
   const userId = req.user.id;
   const date = todayKey();
+  const { category } = req.body;
 
-  const session = await QuizSession.findOne({ user: userId, date });
+  const session = await QuizSession.findOne({ user: userId, date, category });
   if (!session || session.status !== "in_progress") {
-    return res.status(409).json({ error: "No active quiz session." });
+    return res.status(409).json({ error: "No active quiz session for this category." });
   }
 
-  const cached = await redis.get(redisKey(userId, date));
+  const cached = await redis.get(redisKey(userId, date, category));
   const state = typeof cached === "string" ? JSON.parse(cached) : cached;
   if (!state) return res.status(410).json({ error: "Session expired, please restart." });
 
-  const round = state.plan[session.currentCategoryIndex];
-  const question = round?.questions[session.currentQuestionIndex];
+  const question = state.questions[session.currentQuestionIndex];
   if (!question) return res.status(400).json({ error: "No current question." });
 
-  const used = state.hintsUsedByCategory[round.category] || 0;
-  if (used >= HINTS_PER_CATEGORY) {
+  if (state.hintsUsed >= HINTS_PER_CATEGORY) {
     return res.status(403).json({ error: "No hints remaining for this category." });
   }
 
-  const hint = question.hints?.[used] || "No more hints available.";
-  state.hintsUsedByCategory[round.category] = used + 1;
-  await redis.set(redisKey(userId, date), JSON.stringify(state), { ex: 60 * 60 * 6 });
+  const hint = question.hints?.[state.hintsUsed] || "No more hints available.";
+  state.hintsUsed += 1;
+  await redis.set(redisKey(userId, date, category), JSON.stringify(state), { ex: 60 * 60 * 6 });
 
-  res.json({ hint, hintsRemaining: HINTS_PER_CATEGORY - (used + 1) });
+  res.json({ hint, hintsRemaining: HINTS_PER_CATEGORY - state.hintsUsed });
 });
 
-// POST /api/quiz/violation - tab-switch/blur detected on the client
+// POST /api/quiz/violation - body: { category }
 router.post("/violation", requireAuth, async (req, res) => {
   const userId = req.user.id;
   const date = todayKey();
+  const { category } = req.body;
 
-  const session = await QuizSession.findOne({ user: userId, date });
+  const session = await QuizSession.findOne({ user: userId, date, category });
   if (!session || session.status !== "in_progress") {
-    return res.status(409).json({ error: "No active quiz session." });
+    return res.status(409).json({ error: "No active quiz session for this category." });
   }
 
   session.violations += 1;
@@ -227,7 +220,7 @@ router.post("/violation", requireAuth, async (req, res) => {
     session.status = "terminated_violation";
     session.completedAt = new Date();
     await session.save();
-    await redis.del(redisKey(userId, date));
+    await redis.del(redisKey(userId, date, category));
     return res.json({ terminated: true, violations: session.violations });
   }
 

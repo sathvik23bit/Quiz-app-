@@ -20,8 +20,8 @@ router.get("/leaderboard", requireAuth, async (req, res) => {
 router.get("/history", requireAuth, async (req, res) => {
   const sessions = await QuizSession.find({ user: req.user.id })
     .sort({ createdAt: -1 })
-    .limit(30)
-    .select("date status score violations completedAt")
+    .limit(50)
+    .select("date category status score violations completedAt")
     .lean();
 
   res.json({ history: sessions });
@@ -33,10 +33,12 @@ router.get("/analysis", requireAuth, async (req, res) => {
 
   const byCategory = {};
   for (const session of sessions) {
+    const category = session.category;
+    if (!category) continue;
+    if (!byCategory[category]) byCategory[category] = { correct: 0, total: 0 };
     for (const ans of session.answers || []) {
-      if (!byCategory[ans.category]) byCategory[ans.category] = { correct: 0, total: 0 };
-      byCategory[ans.category].total += 1;
-      if (ans.correct) byCategory[ans.category].correct += 1;
+      byCategory[category].total += 1;
+      if (ans.correct) byCategory[category].correct += 1;
     }
   }
 

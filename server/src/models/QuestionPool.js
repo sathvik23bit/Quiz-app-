@@ -8,6 +8,9 @@ const questionSchema = new mongoose.Schema(
     acceptableAnswers: [{ type: String }], // alt phrasings for fuzzy/exact matching
     difficulty: { type: String, enum: ["easy", "medium", "hard"], required: true },
     hints: [{ type: String }],
+    explanation: { type: String, default: "" }, // shown to the player after answering
+    isImageQuestion: { type: Boolean, default: false },
+    imageQuery: { type: String, default: null }, // search phrase used to fetch a photo
     source: { type: String }, // where it was grounded from, if available
   },
   { _id: false }
