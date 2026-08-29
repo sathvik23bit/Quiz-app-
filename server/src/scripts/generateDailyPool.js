@@ -29,12 +29,17 @@ async function generateOneCategory(date, category) {
     let questions = await generateCategoryPool(category);
     let notes = "";
 
-    if (questions.length < POOL_SIZE_PER_CATEGORY) {
+    if (questions.length !== POOL_SIZE_PER_CATEGORY) {
       const shortfall = POOL_SIZE_PER_CATEGORY - questions.length;
-      const backfill = await backfillFromEvergreen(category, shortfall);
-      questions = [...questions, ...backfill];
-      notes = `Backfilled ${backfill.length} from evergreen bank (generation returned ${questions.length - backfill.length}).`;
-      console.warn(`[pool] ${category}: ${notes}`);
+      if (shortfall > 0) {
+        const backfill = await backfillFromEvergreen(category, shortfall);
+        questions = [...questions, ...backfill];
+        notes = `Backfilled ${backfill.length} from evergreen bank (Gemini returned ${questions.length - backfill.length}/${POOL_SIZE_PER_CATEGORY}).`;
+        console.warn(`[pool] ${category}: ${notes}`);
+      } else {
+        // Gemini returned more than needed (shouldn't happen, but be safe)
+        questions = questions.slice(0, POOL_SIZE_PER_CATEGORY);
+      }
     }
 
     const status = questions.length > 0 ? "published" : "failed";

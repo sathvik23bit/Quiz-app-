@@ -1,8 +1,17 @@
-import { geminiFlash } from "../config/gemini.js";
-import { POOL_DIFFICULTY_SPLIT } from "../config/categories.js";
+import { geminiFlashLite } from "../config/gemini.js";
+import { QUESTIONS_PER_ROUND, DIFFICULTY_SPLIT } from "../config/categories.js";
 
-function buildPrompt(category, difficulty, count) {
-  return `Generate ${count} quiz questions for the category "${category}" at "${difficulty}" difficulty.
+// Single combined prompt per category (1 Gemini request instead of 3) —
+// Google's free-tier daily quota (RPD) is now tight enough (as low as 20/day
+// on some models) that 19 categories x 3 calls = 57 requests simply doesn't
+// fit. One call per category = 19 requests/day total, which does fit.
+function buildPrompt(category) {
+  return `Generate exactly ${QUESTIONS_PER_ROUND} quiz questions for the category "${category}".
+
+Difficulty distribution (MUST be exact):
+- Hard: ${DIFFICULTY_SPLIT.hard} questions
+- Medium: ${DIFFICULTY_SPLIT.medium} questions
+- Easy: ${DIFFICULTY_SPLIT.easy} questions
 
 Rules:
 - Each question must be a FILL-IN-THE-BLANK or ONE-WORD-ANSWER style question.
@@ -10,12 +19,16 @@ Rules:
 - Avoid ambiguous questions with multiple valid answers, unless you list all acceptable answers.
 - Provide 3 short progressive hints per question (hint 1 = vague, hint 3 = strong clue), none of which give away the answer outright.
 - Answers should be short (1-3 words).
+- Do not repeat questions or ask the same fact in different wording.
+- Difficulty must genuinely match the assigned level.
+- Return exactly ${QUESTIONS_PER_ROUND} questions total: ${DIFFICULTY_SPLIT.hard} hard, ${DIFFICULTY_SPLIT.medium} medium, ${DIFFICULTY_SPLIT.easy} easy.
 
 Respond with ONLY a JSON array (no markdown fences, no commentary), each item shaped exactly as:
 {
   "text": "question text with ____ for the blank",
   "answer": "the primary correct answer",
   "acceptableAnswers": ["alternate phrasing 1", "alternate phrasing 2"],
+  "difficulty": "hard" | "medium" | "easy",
   "hints": ["hint1", "hint2", "hint3"]
 }`;
 }
@@ -26,7 +39,6 @@ function safeParseJsonArray(rawText) {
     const parsed = JSON.parse(cleaned);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
-    // try to salvage a JSON array substring
     const match = cleaned.match(/\[[\s\S]*\]/);
     if (match) {
       try {
@@ -46,45 +58,31 @@ function isValidQuestion(q) {
     q.text.trim().length > 0 &&
     typeof q.answer === "string" &&
     q.answer.trim().length > 0 &&
+    ["hard", "medium", "easy"].includes(q.difficulty) &&
     Array.isArray(q.hints)
   );
 }
 
 /**
- * Generates questions for one category at one difficulty tier.
- * Returns an array of validated question objects (may be shorter than
- * requested `count` if generation/validation drops some).
+ * Generates a full day's pool for one category in a single Gemini call,
+ * mixing all three difficulty tiers in one prompt/response.
  */
-export async function generateQuestionsForTier(category, difficulty, count) {
-  const prompt = buildPrompt(category, difficulty, count);
+export async function generateCategoryPool(category) {
+  const prompt = buildPrompt(category);
 
-  const result = await geminiFlash.generateContent(prompt);
+  const result = await geminiFlashLite.generateContent(prompt);
   const rawText = result.response.text();
   const parsed = safeParseJsonArray(rawText);
 
   return parsed
     .filter(isValidQuestion)
     .map((q, i) => ({
-      qid: `${category}-${difficulty}-${Date.now()}-${i}`,
+      qid: `${category}-${q.difficulty}-${Date.now()}-${i}`,
       text: q.text.trim(),
       answer: q.answer.trim(),
       acceptableAnswers: Array.isArray(q.acceptableAnswers) ? q.acceptableAnswers : [],
-      difficulty,
+      difficulty: q.difficulty,
       hints: q.hints.slice(0, 3),
-      source: "gemini-flash-grounded",
+      source: "gemini-flash-lite-grounded",
     }));
-}
-
-/**
- * Generates a full day's pool for one category across all three difficulty
- * tiers, per POOL_DIFFICULTY_SPLIT.
- */
-export async function generateCategoryPool(category) {
-  const [hard, medium, easy] = await Promise.all([
-    generateQuestionsForTier(category, "hard", POOL_DIFFICULTY_SPLIT.hard),
-    generateQuestionsForTier(category, "medium", POOL_DIFFICULTY_SPLIT.medium),
-    generateQuestionsForTier(category, "easy", POOL_DIFFICULTY_SPLIT.easy),
-  ]);
-
-  return [...hard, ...medium, ...easy];
 }

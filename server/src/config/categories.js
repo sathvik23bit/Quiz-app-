@@ -28,11 +28,11 @@ export const DIFFICULTY_SPLIT = {
   easy: 2,
 };
 
-// Pool generated per category per day (buffer above the 20 a user needs,
-// so different users can get different subsets/order).
-export const POOL_SIZE_PER_CATEGORY = 30;
-export const POOL_DIFFICULTY_SPLIT = {
-  hard: 21,
-  medium: 6,
-  easy: 3,
-};
+// Pool size matches exactly what's needed per round (no buffer) — a bigger
+// buffer would need a bigger Gemini prompt/response per category, and free
+// tier daily quotas are now tight enough (as low as 20 requests/day on some
+// models) that we generate exactly one 20-question set per category per
+// day. Trade-off: all users see the same 20 questions per category, just in
+// a different (deterministic, per-user) order — not a different subset.
+export const POOL_SIZE_PER_CATEGORY = QUESTIONS_PER_ROUND;
+export const POOL_DIFFICULTY_SPLIT = DIFFICULTY_SPLIT;
