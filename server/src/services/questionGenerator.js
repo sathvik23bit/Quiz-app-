@@ -23,6 +23,7 @@ Image questions:
 
 Rules:
 - Each question must be a FILL-IN-THE-BLANK or ONE-WORD-ANSWER style question.
+- Each question's "text" must be at most 35 words.
 - Base every question on verifiable, up-to-date, real-world facts (as of today).
 - Avoid ambiguous questions with multiple valid answers, unless you list all acceptable answers.
 - Provide 3 short progressive hints per question (hint 1 = vague, hint 3 = strong clue), none of which give away the answer outright.
@@ -63,11 +64,14 @@ function safeParseJsonArray(rawText) {
   }
 }
 
+const MAX_QUESTION_WORDS = 35;
+
 function isValidQuestion(q) {
   return (
     q &&
     typeof q.text === "string" &&
     q.text.trim().length > 0 &&
+    q.text.trim().split(/\s+/).length <= MAX_QUESTION_WORDS &&
     typeof q.answer === "string" &&
     q.answer.trim().length > 0 &&
     ["hard", "medium", "easy"].includes(q.difficulty) &&
