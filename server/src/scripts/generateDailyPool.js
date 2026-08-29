@@ -65,10 +65,22 @@ export async function runDailyGeneration() {
   const date = todayKey();
   console.log(`[pool] Starting daily generation for ${date}`);
 
+  // Skip categories already published today — a mid-run deploy or restart
+  // shouldn't force re-spending quota on categories that already succeeded.
+  const alreadyPublished = await QuestionPool.find({ date, status: "published" })
+    .distinct("category");
+  const skipSet = new Set(alreadyPublished);
+  const pending = CATEGORIES.filter((c) => !skipSet.has(c));
+
+  if (skipSet.size > 0) {
+    console.log(`[pool] Skipping ${skipSet.size} already-published categories: ${[...skipSet].join(", ")}`);
+  }
+  console.log(`[pool] ${pending.length} categories remaining: ${pending.join(", ")}`);
+
   // Run categories sequentially with a small delay to stay well within
-  // Gemini free-tier RPM limits (Flash: 10 RPM). Each category makes 3 calls
-  // (hard/medium/easy), so ~1 category every ~20s keeps us safely under.
-  for (const category of CATEGORIES) {
+  // Gemini free-tier RPM limits. One call per category now, so ~1 category
+  // every ~20s keeps us safely under.
+  for (const category of pending) {
     await generateOneCategory(date, category);
     await new Promise((r) => setTimeout(r, 20_000));
   }
