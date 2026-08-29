@@ -29,9 +29,22 @@ function checkTriggerKey(req, res) {
 router.post("/trigger-generation", async (req, res) => {
   if (!checkTriggerKey(req, res)) return;
 
+  const force = req.query.force === "true";
+  if (force) {
+    const date = new Date().toISOString().slice(0, 10);
+    const result = await QuestionPool.deleteMany({ date });
+    console.log(`[admin] Force flag set — deleted ${result.deletedCount} existing pool(s) for ${date}`);
+  }
+
   // Respond immediately; generation takes several minutes so we don't hold
   // the request.
-  res.json({ started: true, message: "Daily generation started in background." });
+  res.json({
+    started: true,
+    forced: force,
+    message: force
+      ? "Cleared today's pools and started full regeneration in background."
+      : "Daily generation started in background.",
+  });
 
   runDailyGeneration().catch((err) =>
     console.error("[admin] Manual trigger-generation failed:", err)
