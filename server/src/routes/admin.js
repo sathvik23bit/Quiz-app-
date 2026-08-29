@@ -3,11 +3,21 @@ import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import QuestionPool from "../models/QuestionPool.js";
 import { generateCategoryPool } from "../services/questionGenerator.js";
 import { runDailyGeneration } from "../scripts/generateDailyPool.js";
+import { CATEGORIES } from "../config/categories.js";
 
 const router = Router();
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function checkTriggerKey(req, res) {
+  const key = req.query.key || req.headers["x-trigger-key"];
+  if (!process.env.TRIGGER_SECRET || key !== process.env.TRIGGER_SECRET) {
+    res.status(403).json({ error: "Invalid or missing trigger key" });
+    return false;
+  }
+  return true;
 }
 
 // POST /api/admin/trigger-generation?key=... - manually kick off today's pool
@@ -17,18 +27,45 @@ function todayKey() {
 // account may exist yet on first setup. Safe to remove once cron is proven
 // reliable and/or the plan is upgraded to support one-off jobs.
 router.post("/trigger-generation", async (req, res) => {
-  const key = req.query.key || req.headers["x-trigger-key"];
-  if (!process.env.TRIGGER_SECRET || key !== process.env.TRIGGER_SECRET) {
-    return res.status(403).json({ error: "Invalid or missing trigger key" });
-  }
+  if (!checkTriggerKey(req, res)) return;
 
-  // Respond immediately; generation takes several minutes (19 categories,
-  // spaced out to respect Gemini rate limits) so we don't hold the request.
+  // Respond immediately; generation takes several minutes so we don't hold
+  // the request.
   res.json({ started: true, message: "Daily generation started in background." });
 
   runDailyGeneration().catch((err) =>
     console.error("[admin] Manual trigger-generation failed:", err)
   );
+});
+
+// GET /api/admin/generation-status?key=... - quick check of how many of
+// today's 19 categories are published, without needing an admin login.
+// Same shared-secret protection as trigger-generation, for the same reason.
+router.get("/generation-status", async (req, res) => {
+  if (!checkTriggerKey(req, res)) return;
+
+  const date = req.query.date || todayKey();
+  const pools = await QuestionPool.find({ date }).select("category status questions").lean();
+  const byCategory = Object.fromEntries(pools.map((p) => [p.category, p]));
+
+  const rows = CATEGORIES.map((category) => {
+    const pool = byCategory[category];
+    return {
+      category,
+      status: pool?.status || "not_started",
+      questionCount: pool?.questions?.length || 0,
+    };
+  });
+
+  const publishedCount = rows.filter((r) => r.status === "published").length;
+
+  res.json({
+    date,
+    publishedCount,
+    totalCategories: CATEGORIES.length,
+    complete: publishedCount === CATEGORIES.length,
+    rows,
+  });
 });
 
 router.use(requireAuth, requireAdmin);
