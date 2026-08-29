@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import QuestionPool from "../models/QuestionPool.js";
+import QuizSession from "../models/QuizSession.js";
 import { generateCategoryPool } from "../services/questionGenerator.js";
 import { runDailyGeneration } from "../scripts/generateDailyPool.js";
 import { CATEGORIES } from "../config/categories.js";
@@ -19,6 +20,16 @@ function checkTriggerKey(req, res) {
   }
   return true;
 }
+
+// DELETE /api/admin/clear-sessions?key=... - wipe all QuizSession documents.
+// One-time cleanup tool for schema migrations (e.g. old sessions predating
+// the per-category session redesign). Same shared-secret protection as the
+// other trigger endpoints.
+router.delete("/clear-sessions", async (req, res) => {
+  if (!checkTriggerKey(req, res)) return;
+  const result = await QuizSession.deleteMany({});
+  res.json({ deleted: result.deletedCount });
+});
 
 // POST /api/admin/trigger-generation?key=... - manually kick off today's pool
 // generation over HTTP. Exists because free-tier hosting (Render) has no
