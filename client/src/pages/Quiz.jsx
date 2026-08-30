@@ -47,6 +47,7 @@ export default function Quiz() {
           correct: data.correct,
           correctAnswer: data.correctAnswer,
           explanation: data.explanation,
+          studyTip: data.studyTip,
         });
 
         // Give the player time to read the answer + explanation before
@@ -68,7 +69,7 @@ export default function Quiz() {
           }));
           setTimeLeft(15);
           startedAtRef.current = Date.now();
-        }, 3500);
+        }, 5000);
       } catch (err) {
         setError(err.response?.data?.error || "Failed to submit answer");
       }
@@ -221,6 +222,14 @@ export default function Quiz() {
             </p>
             {feedback.explanation && (
               <p className="feedback-explanation">{feedback.explanation}</p>
+            )}
+            {feedback.studyTip && (
+              <div className="study-tip">
+                <p className="study-tip-text">💡 {feedback.studyTip.tip}</p>
+                <a href={feedback.studyTip.url} target="_blank" rel="noreferrer">
+                  Learn more →
+                </a>
+              </div>
             )}
           </div>
         )}

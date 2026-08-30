@@ -7,6 +7,7 @@ import { redis } from "../config/redis.js";
 import { selectUserQuestions } from "../utils/seededShuffle.js";
 import { checkAnswer } from "../utils/answerCheck.js";
 import { CATEGORIES, QUESTIONS_PER_ROUND } from "../config/categories.js";
+import { getStudyResource } from "../config/studyResources.js";
 
 const router = Router();
 
@@ -169,6 +170,7 @@ router.post("/answer", requireAuth, async (req, res) => {
     score: session.score,
     correctAnswer: question.answer,
     explanation: question.explanation || "",
+    studyTip: correct ? null : getStudyResource(category),
     question: nextQuestion,
     questionIndex: nextIndex,
   });

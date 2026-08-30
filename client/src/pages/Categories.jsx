@@ -56,9 +56,18 @@ export default function Categories() {
 
   if (loading) return <div className="centered-page">Loading categories...</div>;
 
+  const completedCount = categories.filter((c) => c.status === "completed").length;
+  const progressPct = categories.length ? Math.round((completedCount / categories.length) * 100) : 0;
+
   return (
     <div className="page">
       <h1>Choose a Category</h1>
+      <div className="progress-wrap">
+        <div className="progress-bar-track">
+          <div className="progress-bar-fill" style={{ width: `${progressPct}%` }} />
+        </div>
+        <span className="progress-label">{completedCount}/{categories.length} categories completed today</span>
+      </div>
       {error && <p className="error">{error}</p>}
       <div className="category-grid">
         {categories.map((cat) => {
