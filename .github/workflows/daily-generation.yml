@@ -1,0 +1,38 @@
+name: Daily Question Pool Generation
+
+# Runs automatically every day so today's 19-category question pool is
+# ready before students start playing. No manual login/trigger needed.
+#
+# Times are in UTC (GitHub Actions requirement). India (IST) is UTC+5:30,
+# so 18:25/18:30/18:45 UTC on day N = 23:55/00:00/00:15 IST on day N+1 —
+# i.e. right around midnight in India.
+on:
+  schedule:
+    - cron: '25 18 * * *'  # wake the server just before midnight IST
+    - cron: '30 18 * * *'  # trigger generation
+    - cron: '45 18 * * *'  # verify it completed
+  workflow_dispatch: {}    # lets you also run this manually from the Actions tab
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '25 18 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Wake the backend
+        run: curl -sf "https://quiz-app-backend-i5v9.onrender.com/api/health" || true
+
+  trigger:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '30 18 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Trigger daily generation
+        run: |
+          curl -sf -X POST "https://quiz-app-backend-i5v9.onrender.com/api/admin/trigger-generation?key=${{ secrets.TRIGGER_SECRET }}"
+
+  verify:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '45 18 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Check generation status
+        run: |
+          curl -sf "https://quiz-app-backend-i5v9.onrender.com/api/admin/generation-status?key=${{ secrets.TRIGGER_SECRET }}"
